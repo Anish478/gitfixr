@@ -4,8 +4,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from backend.database.db import get_db, init_db
-from backend.database.models import Run
+from database.db import get_db, init_db
+from database.models import Run
 
 app = FastAPI(title="gitFixr API")
 
