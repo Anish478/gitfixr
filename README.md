@@ -31,6 +31,9 @@
 - [Data Models](#-data-models)
 - [API Reference](#-api-reference)
 - [Tech Stack](#-tech-stack)
+- [Why This Stack](#-why-this-stack)
+- [Tradeoffs](#-tradeoffs)
+- [What We Would Do Differently at Scale](#-what-we-would-do-differently-at-scale)
 - [Project Structure](#-project-structure)
 - [Getting Started](#-getting-started)
 - [Benchmarks](#-benchmarks)
@@ -574,6 +577,89 @@ Fetch aggregated statistics for the dashboard.
 | Chrome Web Store | One-time developer fee | $5 |
 
 > **Total cost to build and ship: $5**
+
+---
+
+## 💡 Why This Stack
+
+### LangGraph over LangChain AgentExecutor
+
+LangGraph models the pipeline as an explicit state machine with typed state, named nodes, and conditional edges. This is preferable to a generic agent loop because the routing logic (retry vs. pass vs. give up) is a first-class conditional edge — not an LLM-decided tool call. Each node is an isolated, testable function. The retry count, strategy escalation, and memory-gated fallback are all structural properties of the graph, not prompt hacks.
+
+### Groq (Llama 3.3 70B) for Reader, Planner, and Critic — Gemini Flash for Code Writer
+
+These are different jobs that reward different model properties. The Code Reader, Planner, and Critic are reasoning tasks: ranking files by relevance, sequencing a fix plan, and scoring a patch against criteria. Groq's Llama 3.3 70B handles structured reasoning well and has the lowest latency on the free tier — critical when the critic can fire up to five times per run.
+
+The Code Writer is a generation task: produce a syntactically valid unified diff across potentially multiple files. Gemini 1.5 Flash has a significantly larger context window than Llama 3.3 70B on Groq's free tier, which matters when the relevant files are large. Flash is also optimised for code generation tasks. Splitting the two jobs across two providers gets the best of both without paying for either.
+
+### E2B for sandboxed test execution
+
+Every candidate patch runs inside an isolated E2B cloud container before any real repository is touched. E2B was chosen over running tests locally (unsafe — arbitrary code execution on the host machine) and over spinning up Docker containers ourselves (complex, slow, requires Docker-in-Docker in CI). E2B spins up a fresh Python 3.11 environment, applies the patch, runs `pytest` and `bandit`, and destroys the container — all in under 60 seconds on the free tier.
+
+### ChromaDB for self-healing memory
+
+ChromaDB runs entirely locally with no API key, no cost, and no network dependency. It persists to disk between runs, supports cosine similarity search over embeddings, and has a Python-native client that integrates cleanly with `sentence-transformers`. The alternative — Pinecone or Weaviate — would add vendor lock-in and cost at a scale where local storage is perfectly adequate.
+
+### sentence-transformers (all-MiniLM-L6-v2) for embeddings
+
+The embedding model runs locally with no API calls, no rate limits, and no cost per embedding. `all-MiniLM-L6-v2` produces 384-dimensional vectors that capture enough semantic similarity to match recurring failure patterns (e.g. "async race condition" matching "concurrent request crash"). Swapping to a hosted embedding model like `text-embedding-3-small` if retrieval quality needs to improve is a one-line change.
+
+### SQLite for dashboard metrics
+
+Dashboard statistics (run counts, per-agent success rates, critic scores, learning curve) are append-only writes that never need to scale horizontally. SQLite is zero-configuration, ships with Python, and handles this workload without a separate database process. It also means the full system runs with `uvicorn main:app` and nothing else.
+
+### Vanilla JS for the Chrome extension
+
+The extension does three things: read a GitHub issue page, POST to the backend, and render streaming WebSocket events in a sidebar. There is no state management problem, no component hierarchy, and no build step. Adding React or a bundler here would be complexity with no payoff. The extension loads instantly and has no dependencies to audit or update.
+
+### Render.com for hosting
+
+Render's free tier supports persistent web services with always-on uptime (unlike Vercel serverless functions which cold-start per request, which would break WebSocket connections). The backend needs a persistent process for the WebSocket streaming route — Render is the cheapest option that supports this without configuration overhead.
+
+---
+
+## ⚖️ Tradeoffs
+
+### Unified diff patching is fragile
+
+The Code Writer produces a unified diff. Applying that diff to the real repository assumes line numbers and context are stable between when the files were read and when the patch is applied. If the issue references a file that has been modified by another commit in the interim, the patch will fail to apply. A more robust approach would be to have the Code Writer emit a full file rewrite for each modified file, at the cost of more tokens per attempt.
+
+### E2B sandbox has a 60-second timeout
+
+The sandbox timeout is intentionally short to keep the pipeline fast. For repositories with slow test suites — large projects, integration tests, database fixtures — this means `pytest` will time out and `tests_passed` will be `False` even if the patch is correct. The critic currently treats a failed sandbox as a signal to retry, which wastes attempts on a timeout rather than a real test failure. A smarter approach would distinguish timeout failures from assertion failures and apply different retry strategies to each.
+
+### ChromaDB memory is local and single-instance
+
+ChromaDB persists to a local directory. This means the self-healing memory is tied to a single machine — if the backend redeploys to a new instance, past failure lessons are lost. For the current scope this is acceptable. A production deployment would mount persistent storage or migrate to a managed vector database.
+
+### SQLite is not safe across multiple backend instances
+
+SQLite uses file-level locking. If multiple instances of the backend run in parallel (e.g. on Render with horizontal scaling enabled), concurrent writes to the dashboard database will produce errors. For this project, the backend runs as a single instance and this is not an issue. A production fix is a Postgres or Redis replacement.
+
+### Groq and Gemini free tier rate limits
+
+The pipeline makes multiple LLM calls per run — up to 3 Groq calls per attempt (Reader, Planner, Critic) and 1 Gemini call, with up to 5 retry attempts. On Groq's free tier, the rate limit is 30 requests per minute for Llama 3.3 70B. A worst-case run (5 retries) consumes 15 Groq calls. Concurrent users running the pipeline simultaneously will hit this limit. The fix is a queued job system that rate-limits pipeline submissions, or upgrading to a paid tier.
+
+### No authentication on the API
+
+The `/fix-issue` endpoint accepts any GitHub token and any issue URL. There is no user authentication, no rate limiting per user, and no billing. This is appropriate for a personal tool or demo but not for a multi-user deployment.
+
+### Memory retrieval only happens at the start
+
+Failure lessons are retrieved once, before the pipeline begins, and injected into the Planner's context. They are not re-retrieved between retry attempts. If retry attempt 3 fails for a reason that matches a stored lesson, that lesson is not surfaced until the next separate pipeline run. A more sophisticated approach would re-query ChromaDB after each failed attempt and add the lesson to the Code Writer's context for the next attempt specifically.
+
+---
+
+## 📈 What We Would Do Differently at Scale
+
+- **Job queue**: Replace `asyncio.create_task` with a proper job queue (Celery + Redis or similar) so pipeline runs are durable, retryable, and distributable across workers.
+- **Persistent vector memory**: Migrate ChromaDB from local disk to a managed instance (Qdrant Cloud or Pinecone) so failure lessons survive redeployments and are shared across instances.
+- **Structured patch output**: Move from unified diffs to full file rewrites with explicit before/after representations, making patch application reliable regardless of line number drift.
+- **Reranking**: Add a cross-encoder reranker between the Code Reader's file selection and the Planner, so the most relevant sections of large files are surfaced rather than whole files.
+- **Sandbox improvements**: Detect timeout failures separately from test failures and apply a targeted retry strategy (e.g. skip sandbox on retry 4 if all previous failures were timeouts).
+- **Authentication + rate limiting**: Add per-user API key validation and a per-key rate limit on pipeline submissions before exposing the backend to multiple users.
+- **Observability**: Integrate LangSmith or LangFuse tracing to monitor per-node latency, token usage, and failure modes across real runs in production.
+- **Evaluation pipeline**: Build a golden dataset of known issue → correct patch pairs and run it against new model or prompt changes to catch regressions before they reach production.
 
 ---
 
