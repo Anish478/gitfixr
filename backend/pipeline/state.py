@@ -5,6 +5,8 @@ class AgentState(TypedDict):
     issue_url:       str
     issue_title:     str
     issue_body:      str
+    issue_comments:  list[str]
+    issue_images:    list[str]
     repo_owner:      str
     repo_name:       str
 
@@ -13,7 +15,7 @@ class AgentState(TypedDict):
     memory_matches:  list[dict]
 
     # ── Code Reader output ─────────────────────────────────
-    relevant_files:  list[str]
+    relevant_files:  list[dict]   # [{path: str, content: str}]
 
     # ── Planner output ─────────────────────────────────────
     plan:            str

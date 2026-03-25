@@ -1,4 +1,41 @@
-# TODO: Agent 2 — Planner
-# Model: Groq Llama 3.3 70B
-# Input:  issue_title, issue_body, relevant_files, memory_lessons
-# Output: plan [list of steps]
+import os
+from groq import Groq
+from pipeline.state import AgentState
+
+_client = Groq(api_key=os.environ["GROQ_API_KEY"])
+
+
+async def planner(state: AgentState) -> dict:
+    """
+    Agent 2 — Planner
+    Input state keys used:  issue_title, issue_body, relevant_files
+    Output key returned:    plan (str)
+    """
+    # Concatenate all file contents into one readable block
+    files_text = "\n\n".join(
+        f"=== {f['path']} ===\n{f['content']}"
+        for f in state["relevant_files"]
+    )
+
+    comments_text = "\n".join(f"- {c}" for c in state.get("issue_comments", []))
+
+    prompt = f"""You are an expert software engineer fixing a GitHub issue.
+
+Issue title: {state['issue_title']}
+Issue body:  {state['issue_body']}
+{f"Issue comments:{chr(10)}{comments_text}" if comments_text else ""}
+
+Relevant source files:
+{files_text}
+
+Write a numbered step-by-step plan to fix this issue.
+Be specific: name the file and function to change in each step.
+Return plain text only — no JSON, no markdown headers."""
+
+    resp = _client.chat.completions.create(
+        model="llama-3.3-70b-versatile",
+        messages=[{"role": "user", "content": prompt}],
+    )
+
+    plan = resp.choices[0].message.content.strip()
+    return {"plan": plan}
