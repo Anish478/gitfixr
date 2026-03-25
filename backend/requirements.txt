@@ -3,7 +3,7 @@ fastapi
 uvicorn[standard]
 python-dotenv
 groq
-google-generativeai
+google-genai
 langgraph
 langchain-core
 e2b
@@ -12,3 +12,4 @@ chromadb
 sentence-transformers
 sqlalchemy
 httpx
+unidiff

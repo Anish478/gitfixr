@@ -29,6 +29,8 @@ This document outlines the phased build plan for gitFixr.
 - `pipeline/graph.py` — wire agents 1–3 into a LangGraph `StateGraph`
 - `pipeline/agents/pr_opener.py` — GitHub API: fork repo → create branch → commit patch → open PR
 - `extension/sidebar.html` + `sidebar.js` — basic UI showing pipeline status and PR link
+- `extension/content_script.js` — also extract issue comments from the page DOM and include them in the payload sent to the backend, so agents have full context (comments often contain the exact file/line or maintainer clarifications)
+- `extension/content_script.js` + `pipeline/agents/code_writer.py` — extract image URLs from the issue body and pass them to Gemini Flash (which is multimodal) so screenshots attached to issues are included as visual context when generating the patch
 
 ---
 

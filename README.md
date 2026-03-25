@@ -592,6 +592,10 @@ These are different jobs that reward different model properties. The Code Reader
 
 The Code Writer is a generation task: produce a syntactically valid unified diff across potentially multiple files. Gemini 1.5 Flash has a significantly larger context window than Llama 3.3 70B on Groq's free tier, which matters when the relevant files are large. Flash is also optimised for code generation tasks. Splitting the two jobs across two providers gets the best of both without paying for either.
 
+### Direct SDK calls over LangChain for LLM invocations
+
+Each agent calls the Groq and Gemini SDKs directly rather than routing through LangChain's abstraction layer. LangChain is useful when you need prompt templates shared across many agents, built-in provider switching, or chained LLM calls — none of which apply here. Our prompts are one-off and agent-specific. Going direct removes a layer of indirection, makes errors easier to trace, and keeps each agent self-contained. `langchain-core` is still installed because LangGraph depends on it internally, but it is not used for LLM calls.
+
 ### E2B for sandboxed test execution
 
 Every candidate patch runs inside an isolated E2B cloud container before any real repository is touched. E2B was chosen over running tests locally (unsafe — arbitrary code execution on the host machine) and over spinning up Docker containers ourselves (complex, slow, requires Docker-in-Docker in CI). E2B spins up a fresh Python 3.11 environment, applies the patch, runs `pytest` and `bandit`, and destroys the container — all in under 60 seconds on the free tier.
@@ -656,6 +660,7 @@ Failure lessons are retrieved once, before the pipeline begins, and injected int
 - **Persistent vector memory**: Migrate ChromaDB from local disk to a managed instance (Qdrant Cloud or Pinecone) so failure lessons survive redeployments and are shared across instances.
 - **Structured patch output**: Move from unified diffs to full file rewrites with explicit before/after representations, making patch application reliable regardless of line number drift.
 - **Reranking**: Add a cross-encoder reranker between the Code Reader's file selection and the Planner, so the most relevant sections of large files are surfaced rather than whole files.
+- **Upgraded LLM for Code Reader**: Swap Groq (Llama 3.3 70B) for a higher-context model such as Claude Sonnet (200K tokens) or Gemini 1.5 Pro (1M tokens). With a 1M context window the file size filter can be removed entirely and the full contents of every file in the repo can be sent in a single prompt, eliminating the file selection step and making the pipeline accurate even on repos with poorly named files. The agent interface never changes — swapping the model is a one or two line change inside `code_reader.py`.
 - **Sandbox improvements**: Detect timeout failures separately from test failures and apply a targeted retry strategy (e.g. skip sandbox on retry 4 if all previous failures were timeouts).
 - **Authentication + rate limiting**: Add per-user API key validation and a per-key rate limit on pipeline submissions before exposing the backend to multiple users.
 - **Observability**: Integrate LangSmith or LangFuse tracing to monitor per-node latency, token usage, and failure modes across real runs in production.
