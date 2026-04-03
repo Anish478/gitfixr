@@ -66,45 +66,45 @@ gitFixr handles the rest:
 
 ```
 ┌─────────────────────────────────────────────────────┐
-│                  CHROME EXTENSION                    │
-│                                                      │
-│  manifest.json       → extension config              │
-│  content_script.js   → reads GitHub issue page       │
-│  sidebar.html/.js    → live pipeline progress UI     │
-│  dashboard.html/.js  → reliability + learning stats  │
-│  background.js       → communicates with backend     │
-│  styles.css                                          │
+│                  CHROME EXTENSION                   │
+│                                                     │
+│  manifest.json       → extension config             │
+│  content_script.js   → reads GitHub issue page      │
+│  sidebar.html/.js    → live pipeline progress UI    │
+│  dashboard.html/.js  → reliability + learning stats │
+│  background.js       → communicates with backend    │
+│  styles.css                                         │
 └────────────────────────┬────────────────────────────┘
                          │
                     HTTP + WebSocket
                          │
 ┌────────────────────────▼────────────────────────────┐
-│                   BACKEND (FastAPI)                  │
-│                                                      │
-│  POST /fix-issue       → starts the pipeline         │
-│  WS   /stream/{run_id} → streams live progress       │
-│  GET  /dashboard/stats → feeds the dashboard         │
+│                   BACKEND (FastAPI)                 │
+│                                                     │
+│  POST /fix-issue       → starts the pipeline        │
+│  WS   /stream/{run_id} → streams live progress      │
+│  GET  /dashboard/stats → feeds the dashboard        │
 └────────────────────────┬────────────────────────────┘
                          │
 ┌────────────────────────▼────────────────────────────┐
-│                 LANGGRAPH PIPELINE                   │
-│                                                      │
-│  Memory Retrieval    [SELF-HEALING]                  │
-│  Agent 1: Code Reader                                │
-│  Agent 2: Planner                                    │
-│  Agent 3: Code Writer                                │
-│  Agent 4: Sandbox    [TWIST 3 — E2B]                 │
-│  Agent 5: Critic     [TWIST 1 — retry loop]          │
-│  Memory Storage      [SELF-HEALING]                  │
-│  Agent 6: PR Opener                                  │
+│                 LANGGRAPH PIPELINE                  │
+│                                                     │
+│  Memory Retrieval    [SELF-HEALING]                 │
+│  Agent 1: Code Reader                               │
+│  Agent 2: Planner                                   │
+│  Agent 3: Code Writer                               │
+│  Agent 4: Sandbox    [TWIST 3 — E2B]                │
+│  Agent 5: Critic     [TWIST 1 — retry loop]         │
+│  Memory Storage      [SELF-HEALING]                 │
+│  Agent 6: PR Opener                                 │
 └──────────┬──────────────────────┬───────────────────┘
            │                      │
 ┌──────────▼──────────┐  ┌────────▼──────────────────┐
-│   SQLite Database   │  │   ChromaDB (local)         │
-│   [TWIST 2]         │  │   [SELF-HEALING]           │
-│   Reliability stats │  │   Failure embeddings       │
-│   Learning curve    │  │   Lessons learned          │
-└─────────────────────┘  └────────────────────────────┘
+│   SQLite Database   │  │   ChromaDB (local)        │
+│   [TWIST 2]         │  │   [SELF-HEALING]          │
+│   Reliability stats │  │   Failure embeddings      │
+│   Learning curve    │  │   Lessons learned         │
+└─────────────────────┘  └───────────────────────────┘
 ```
 
 ---
