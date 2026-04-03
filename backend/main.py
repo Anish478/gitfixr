@@ -80,7 +80,7 @@ async def fix_issue(payload: FixIssueRequest, db: Session = Depends(get_db)):
         "memory_matches":     [],
         "relevant_files":     [],
         "plan":               "",
-        "patch":              "",
+        "file_changes":       [],
         "retry_strategy":     "standard",
         "sandbox_result":     {},
         "critic_scores":      {},
@@ -126,7 +126,10 @@ async def stream_run(ws: WebSocket, run_id: str):
     except Exception:
         pass
     finally:
-        await ws.close()
+        try:
+            await ws.close()
+        except Exception:
+            pass
 
 @app.get("/health")
 def health():

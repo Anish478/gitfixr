@@ -30,7 +30,7 @@ async def sandbox(state: AgentState) -> dict:
 
 
 def _run_in_sandbox(state: dict) -> dict:
-    patch = state.get("patch", "")
+    file_changes  = state.get("file_changes", [])
     relevant_files = state.get("relevant_files", [])
 
     if not os.environ.get("E2B_API_KEY"):
@@ -43,22 +43,19 @@ def _run_in_sandbox(state: dict) -> dict:
 
     sbx = Sandbox.create(timeout=120)
     try:
+        # Write original files first
         for f in relevant_files:
-            dir_path = "/".join(f["path"].split("/")[:-1]) #get the directory path eg: src/components/button.py -> src/components
+            dir_path = "/".join(f["path"].split("/")[:-1])
             if dir_path:
-                sbx.commands.run(f"mkdir -p /code/{dir_path}")  #create the directory path in the sandbox
-            sbx.files.write(f"/code/{f['path']}", f["content"]) #write the file content to the sandbox
+                sbx.commands.run(f"mkdir -p /code/{dir_path}")
+            sbx.files.write(f"/code/{f['path']}", f["content"])
 
-        sbx.commands.run("cd /code && git init 2>&1")  # git apply requires a git repo
-        sbx.files.write("/code/fixes", patch)
-        apply = sbx.commands.run("cd /code && git apply fixes 2>&1")
-        if apply.exit_code != 0:
-            return {
-                "tests_passed": False,
-                "test_output": f"Patch apply failed:\n{apply.stdout}",
-                "security_issues": [],
-                "security_score": 0.8,  # no scan ran — neutral, not penalised
-            }
+        # Overwrite with changed files
+        for f in file_changes:
+            dir_path = "/".join(f["path"].split("/")[:-1])
+            if dir_path:
+                sbx.commands.run(f"mkdir -p /code/{dir_path}")
+            sbx.files.write(f"/code/{f['path']}", f["content"])
 
         # Detect all languages in the repo and collect test suites to run
         file_paths = [f["path"] for f in relevant_files]
@@ -70,15 +67,24 @@ def _run_in_sandbox(state: dict) -> dict:
 
         for test_cmd, install_cmd, suite_is_python in suites:
             if install_cmd:
-                sbx.commands.run(install_cmd)
+                try:
+                    sbx.commands.run(install_cmd)
+                except Exception:
+                    pass
 
-            test_r = sbx.commands.run(f"cd /code && {test_cmd} 2>&1")
-            all_output.append(f"$ {test_cmd}\n{(test_r.stdout or '').strip()}")
+            try:
+                test_r = sbx.commands.run(f"cd /code && {test_cmd} 2>&1")
+                output = (test_r.stdout or "").strip()
+                exit_code = test_r.exit_code
+            except Exception as e:
+                output = str(e)
+                exit_code = 1
+            all_output.append(f"$ {test_cmd}\n{output}")
 
             if suite_is_python:
-                passed = test_r.exit_code in (0, 5)   # 5 = no tests collected
+                passed = exit_code in (0, 5)   # 5 = no tests collected
             else:
-                passed = test_r.exit_code == 0
+                passed = exit_code == 0
 
             if not passed:
                 tests_passed = False   # any suite failing = overall fail

@@ -21,8 +21,8 @@ class AgentState(TypedDict):
     # ── Planner output ─────────────────────────────────────
     plan:            str
 
-    # ── Code Writer output ────────────────────────────────
-    patch:           str
+    # ── Code Writer output ────────────────────────────────────────────────────
+    file_changes:    list[dict]   # [{path: str, content: str}]
     retry_strategy:  str
 
     # ── Sandbox output ────────────────────────────────────

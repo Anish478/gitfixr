@@ -1,8 +1,8 @@
 import os
-from groq import Groq
+from google import genai
 from pipeline.state import AgentState
 
-_client = Groq(api_key=os.environ["GROQ_API_KEY"])
+_client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
 
 
 async def planner(state: AgentState) -> dict:
@@ -32,10 +32,10 @@ Write a numbered step-by-step plan to fix this issue.
 Be specific: name the file and function to change in each step.
 Return plain text only — no JSON, no markdown headers."""
 
-    resp = _client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
-        messages=[{"role": "user", "content": prompt}],
+    resp = await _client.aio.models.generate_content(
+        model="gemini-2.5-flash",
+        contents=prompt,
     )
 
-    plan = resp.choices[0].message.content.strip()
+    plan = resp.text.strip()
     return {"plan": plan}

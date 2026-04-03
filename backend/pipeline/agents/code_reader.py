@@ -2,10 +2,10 @@ import os
 import json
 import base64
 import httpx
-from groq import Groq
+from google import genai
 from pipeline.state import AgentState
 
-_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+_client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
 
 
 async def code_reader(state: AgentState) -> dict:
@@ -50,13 +50,17 @@ async def code_reader(state: AgentState) -> dict:
                 Return a JSON object with a "files" key listing the 5 most relevant file paths.
                 Example: {{"files": ["src/foo.py", "lib/bar.py"]}}"""
 
-    groq_resp = _client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
-        messages=[{"role": "user", "content": prompt}],
-        response_format={"type": "json_object"},
+    gemini_resp = await _client.aio.models.generate_content(
+        model="gemini-2.5-flash",
+        contents=prompt,
     )
 
-    picked = json.loads(groq_resp.choices[0].message.content)
+    raw = gemini_resp.text.strip()
+    if raw.startswith("```"):
+        lines = raw.split("\n")
+        end = -1 if lines[-1].startswith("```") else len(lines)
+        raw = "\n".join(lines[1:end])
+    picked = json.loads(raw)
     # Groq might return {"files": [...]} or {"paths": [...]} — grab the first list value
     if isinstance(picked, dict):
         picked = next(iter(picked.values()))
