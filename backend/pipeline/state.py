@@ -2,6 +2,7 @@ from typing import TypedDict, Optional
 
 class AgentState(TypedDict):
     # ── Input ──────────────────────────────────────────────
+    run_id:          str
     issue_url:       str
     issue_title:     str
     issue_body:      str

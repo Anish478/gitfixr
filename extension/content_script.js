@@ -25,19 +25,12 @@ function extractIssueData() {
 
 console.log("[gitFixr] content script loaded on:", window.location.href);
 
-// Wait for GitHub to finish rendering the issue body dynamically
+// Wait for GitHub to finish rendering the issue body dynamically,
+// then store the extracted data for the sidebar button to pick up.
+// The pipeline does NOT start automatically — the user clicks "Fix this Issue".
 setTimeout(() => {
   const data = extractIssueData();
   console.log("[gitFixr] extracted issue data:", data);
-
-  chrome.runtime.sendMessage(
-    { type: "ISSUE_DETECTED", payload: data },
-    (response) => {
-      if (chrome.runtime.lastError) {
-        console.warn("[gitFixr] sendMessage error:", chrome.runtime.lastError);
-      } else {
-        console.log("[gitFixr] run_id received:", response?.run_id);
-      }
-    }
-  );
+  // Clear any stale pipeline state from a previous run so the button always shows
+  chrome.storage.local.set({ pending_issue: data, status: null, run_id: null, pr_url: null, error: null });
 }, 2000);

@@ -117,7 +117,7 @@ gitFixr handles the rest:
 | 1 | Code Reader | Groq — Llama 3.3 70B | Fetches + ranks relevant source files |
 | 2 | Planner | Groq — Llama 3.3 70B | Generates step-by-step fix plan |
 | 3 | Code Writer | Gemini 1.5 Flash | Writes the unified diff patch |
-| 4 | Sandbox | E2B (no LLM) | Runs tests + security scan in isolation |
+| 4 | Sandbox | E2B (no LLM) | Detects language, runs matching test suite(s) + security scanner(s) in isolation |
 | 5 | Critic | Groq — Llama 3.3 70B | Scores patch quality, triggers retries |
 | 6 | Memory Storage | sentence-transformers (local) | Stores failure embeddings for future runs |
 | 7 | PR Opener | GitHub API (no LLM) | Opens the real Pull Request |
@@ -174,8 +174,11 @@ GitHub Issue URL
 │  Agent 4: Sandbox (E2B)   [TWIST 3]     │
 │  • Spins up isolated container          │
 │  • Applies patch to codebase            │
-│  • Runs: pytest     → pass / fail       │
-│  • Runs: bandit     → security score    │
+│  • Detects language → picks test runner │
+│    Python → pytest  · JS → jest/npm     │
+│    Go → go test     · Rust → cargo test │
+│    Java → mvn/gradle· Ruby → rspec      │
+│  • Per-language security scan (see §5)  │
 │  • Destroys container after use         │
 └──────────────────┬──────────────────────┘
                    │
@@ -325,18 +328,34 @@ Every patch is executed in an isolated E2B container before touching any real re
 
 ```
 E2B Container Lifecycle:
-  1. Spin up fresh python:3.11 container
+  1. Spin up fresh container
   2. Upload relevant source files
-  3. Apply the patch
-  4. pip install pytest bandit
-  5. Run pytest  ──► pass / fail + output
-  6. Run bandit  ──► security issues list
-  7. Destroy container
+  3. Apply the patch via git apply
+  4. Detect ALL languages present in the repo:
+       .py files     → python -m pytest
+       package.json  → jest / vitest / mocha / npm test
+       go.mod        → go test ./...
+       Cargo.toml    → cargo test
+       pom.xml       → mvn test
+       build.gradle  → ./gradlew test
+       Gemfile       → bundle exec rspec
+     Fullstack repos run ALL matched test suites.
+     Any suite failing = tests_passed = False.
+  5. Run security scanner per language detected:
+       Python     → bandit        (eval, SQL injection, weak crypto, hardcoded secrets)
+       JS/TS      → eslint-plugin-security  (XSS, path traversal, prototype pollution)
+       Go         → gosec         (SQL injection, weak crypto, unsafe pointers)
+       Rust       → cargo audit   (known CVEs in dependencies)
+       Ruby       → bundler-audit (known CVEs in Gemfile dependencies)
+       Java       → (no scanner — neutral score of 0.8)
+     All scanner results are combined and averaged into one security score.
+  6. Destroy container
 
-Security score = max(0.0,  1.0 − (issue_count × 0.1))
+Security score per scanner = max(0.0, 1.0 − (HIGH×0.3) − (MEDIUM×0.1))
+Final security score       = average across all scanners that ran
 ```
 
-**Guarantees:** Isolated execution · No host machine access · 60s timeout · Auto-destroyed
+**Guarantees:** Isolated execution · No host machine access · 120s timeout · Auto-destroyed
 
 ---
 
@@ -598,7 +617,7 @@ Each agent calls the Groq and Gemini SDKs directly rather than routing through L
 
 ### E2B for sandboxed test execution
 
-Every candidate patch runs inside an isolated E2B cloud container before any real repository is touched. E2B was chosen over running tests locally (unsafe — arbitrary code execution on the host machine) and over spinning up Docker containers ourselves (complex, slow, requires Docker-in-Docker in CI). E2B spins up a fresh Python 3.11 environment, applies the patch, runs `pytest` and `bandit`, and destroys the container — all in under 60 seconds on the free tier.
+Every candidate patch runs inside an isolated E2B cloud container before any real repository is touched. E2B was chosen over running tests locally (unsafe — arbitrary code execution on the host machine) and over spinning up Docker containers ourselves (complex, slow, requires Docker-in-Docker in CI). E2B spins up a fresh container, detects the project language from repo files (`package.json`, `go.mod`, `Cargo.toml`, `pom.xml`, `Gemfile`, etc.), runs the appropriate test command (`pytest`, `jest`, `go test`, `cargo test`, `mvn test`, `rspec`), and destroys the container — all within the sandbox timeout. Security scanning runs per language: `bandit` for Python, `eslint-plugin-security` for JS/TS, `gosec` for Go, `cargo audit` for Rust, and `bundler-audit` for Ruby. Fullstack repos run all matched scanners and average the scores. Java falls back to a neutral score of `0.8` — tools like SpotBugs require a full compilation step that exceeds the 120s timeout.
 
 ### ChromaDB for self-healing memory
 
@@ -628,9 +647,13 @@ Render's free tier supports persistent web services with always-on uptime (unlik
 
 The Code Writer produces a unified diff. Applying that diff to the real repository assumes line numbers and context are stable between when the files were read and when the patch is applied. If the issue references a file that has been modified by another commit in the interim, the patch will fail to apply. A more robust approach would be to have the Code Writer emit a full file rewrite for each modified file, at the cost of more tokens per attempt.
 
-### E2B sandbox has a 60-second timeout
+### E2B sandbox has a 120-second timeout
 
-The sandbox timeout is intentionally short to keep the pipeline fast. For repositories with slow test suites — large projects, integration tests, database fixtures — this means `pytest` will time out and `tests_passed` will be `False` even if the patch is correct. The critic currently treats a failed sandbox as a signal to retry, which wastes attempts on a timeout rather than a real test failure. A smarter approach would distinguish timeout failures from assertion failures and apply different retry strategies to each.
+The sandbox timeout is intentionally bounded to keep the pipeline fast. For repositories with slow test suites — large projects, integration tests, database fixtures — the test runner will time out and `tests_passed` will be `False` even if the patch is correct. The critic currently treats a failed sandbox as a signal to retry, which wastes attempts on a timeout rather than a real test failure. A smarter approach would distinguish timeout failures from assertion failures and apply different retry strategies to each.
+
+### Security scanning is unavailable for Java
+
+Language-specific security scanners are now integrated for Python (`bandit`), JavaScript/TypeScript (`eslint-plugin-security`), Go (`gosec`), Rust (`cargo audit`), and Ruby (`bundler-audit`). Java is the exception — tools like SpotBugs and FindSecBugs require the project to be fully compiled first (`mvn package` or `./gradlew build`), which can take minutes and frequently fails without the full project context. This makes them too heavy for a sandbox with a 120s timeout. Java projects and any unrecognised language fall back to a neutral security score of `0.8`.
 
 ### ChromaDB memory is local and single-instance
 
@@ -661,8 +684,9 @@ Failure lessons are retrieved once, before the pipeline begins, and injected int
 - **Structured patch output**: Move from unified diffs to full file rewrites with explicit before/after representations, making patch application reliable regardless of line number drift.
 - **Reranking**: Add a cross-encoder reranker between the Code Reader's file selection and the Planner, so the most relevant sections of large files are surfaced rather than whole files.
 - **Upgraded LLM for Code Reader**: Swap Groq (Llama 3.3 70B) for a higher-context model such as Claude Sonnet (200K tokens) or Gemini 1.5 Pro (1M tokens). With a 1M context window the file size filter can be removed entirely and the full contents of every file in the repo can be sent in a single prompt, eliminating the file selection step and making the pipeline accurate even on repos with poorly named files. The agent interface never changes — swapping the model is a one or two line change inside `code_reader.py`.
-- **Sandbox improvements**: Detect timeout failures separately from test failures and apply a targeted retry strategy (e.g. skip sandbox on retry 4 if all previous failures were timeouts).
+- **Sandbox improvements**: Detect timeout failures separately from test failures and apply a targeted retry strategy (e.g. skip sandbox on retry 4 if all previous failures were timeouts). Add Java security scanning via SpotBugs/FindSecBugs once a pre-compilation step is available — currently Java falls back to a neutral `0.8` score because these tools require a full `mvn package` or `./gradlew build` which exceeds the sandbox timeout.
 - **Authentication + rate limiting**: Add per-user API key validation and a per-key rate limit on pipeline submissions before exposing the backend to multiple users.
+- **Run status endpoint is unauthenticated** *(caught by us, not Claude)*: `GET /status/{run_id}` currently returns pipeline status to anyone who knows the `run_id`. While UUIDs are practically unguessable (2¹²² possibilities), the endpoint has no ownership check — any token holder can query any run. The fix is to store a hash of the GitHub token alongside each run at creation time, and verify it on every `/status` and `/stream` request. This is safe to defer while the backend runs on `localhost` but must be addressed before the Render.com deployment in Phase 6.
 - **Observability**: Integrate LangSmith or LangFuse tracing to monitor per-node latency, token usage, and failure modes across real runs in production.
 - **Evaluation pipeline**: Build a golden dataset of known issue → correct patch pairs and run it against new model or prompt changes to catch regressions before they reach production.
 
@@ -761,14 +785,14 @@ CHROMADB_PATH=./data/chromadb
 EMBEDDINGS_MODEL=all-MiniLM-L6-v2
 
 # App
-BACKEND_URL=http://localhost:8000
+BACKEND_URL=http://localhost:8001
 ENV=development
 ```
 
 ### 4. Start the backend
 
 ```bash
-uvicorn main:app --reload --port 8000
+uvicorn main:app --reload --port 8001
 ```
 
 ### 5. Load the Chrome extension

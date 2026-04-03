@@ -39,7 +39,7 @@ async def pr_opener(state: AgentState) -> dict:
     patchset = unidiff.PatchSet(state["patch"])
 
     for patched_file in patchset:
-        path = patched_file.path.lstrip("b/")
+        path = patched_file.path[2:] if patched_file.path.startswith("b/") else patched_file.path
 
         # Get original content from relevant_files, or fetch from GitHub if not there
         if path in files_by_path:

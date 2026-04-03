@@ -1,8 +1,7 @@
 const BACKEND_URL = "http://localhost:8001";
 
-// Listen for issue data from content_script.js
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message.type === "ISSUE_DETECTED") {
+  if (message.type === "FIX_ISSUE") {
     handleIssueDetected(message.payload, sendResponse);
     return true;  // keep message channel open for async response
   }

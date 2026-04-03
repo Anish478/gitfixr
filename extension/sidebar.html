@@ -14,12 +14,17 @@
     #pr-link { display: none; margin-top: 12px; text-align: center; }
     #pr-link a { color: #238636; font-weight: bold; text-decoration: none; }
     #pr-link a:hover { text-decoration: underline; }
+    #fix-btn { display: none; margin-top: 12px; width: 100%; padding: 10px; background: #238636; color: #fff; border: none; border-radius: 6px; font-size: 14px; font-weight: bold; cursor: pointer; }
+    #fix-btn:hover { background: #1a7f2e; }
+    #fix-btn:disabled { background: #94d3a2; cursor: not-allowed; }
   </style>
 </head>
 <body>
   <h2>🔧 gitFixr</h2>
   <div id="box" class="idle">Open a GitHub issue and let gitFixr fix it.</div>
+  <button id="fix-btn">🔧 Fix this Issue</button>
   <div id="pr-link"><a id="pr-anchor" href="#" target="_blank">Open Pull Request →</a></div>
+  <div id="details" style="margin-top:12px; font-size:12px; color:#555;"></div>
   <script src="sidebar.js"></script>
 </body>
 </html>
